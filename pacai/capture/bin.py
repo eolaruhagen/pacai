@@ -9,6 +9,7 @@ import typing
 import pacai.capture.board
 import pacai.capture.game
 import pacai.capture.team
+import pacai.core.agentinfo
 import pacai.util.alias
 import pacai.util.bin
 
@@ -31,7 +32,7 @@ def set_cli_args(parser: argparse.ArgumentParser, **kwargs: typing.Any) -> argpa
             help = ('Select the capture team that will play on the blue team (default: %(default)s).'
                     + f' Builtin teams: {pacai.util.alias.CAPTURE_TEAM_SHORT_NAMES}.'))
 
-    # Edit the --board argument to add informastion about random boards.
+    # Edit the --board argument to add information about random boards.
     board_arg = getattr(parser, '_option_string_actions', {}).get('--board', None)
     if (board_arg is not None):
         board_arg.help = board_arg.help.replace(', or just a filename', ', just a filename, or `random[-seed]` (e.g. "random", "random-123")')
@@ -52,6 +53,11 @@ def init_from_args(args: argparse.Namespace) -> tuple[dict[int, pacai.core.agent
 
     red_team_base = red_team_func()
     blue_team_base = blue_team_func()
+
+    # Don't trust all the information coming from the team creation.
+    for team in [red_team_base, blue_team_base]:
+        for agent_info in team:
+            agent_info.move_delay = pacai.core.agentinfo.DEFAULT_MOVE_DELAY
 
     base_agent_infos: dict[int, pacai.core.agentinfo.AgentInfo] = {}
     for i in range(pacai.core.board.MAX_AGENTS):
