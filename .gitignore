@@ -2,6 +2,9 @@
 .DS_Store
 *.swp
 
+*config.json
+*.code-workspace
+
 # Language Dirents
 .ipynb_checkpoints
 node_modules/
