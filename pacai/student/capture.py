@@ -11,6 +11,8 @@ import pacai.capture.gamestate
 import pacai.core.board
 import pacai.pacman.board
 
+
+
 def create_team() -> list[pacai.core.agentinfo.AgentInfo]:
     """
     Get the agent information that will be used to create a capture team.
@@ -21,19 +23,20 @@ def create_team() -> list[pacai.core.agentinfo.AgentInfo]:
 
     return [agent1_info, agent2_info]
 
-
-
 # first start with two basic offense defense greedy based agents using the distance precomputer
 class InitialReflexOffensive(pacai.agents.greedy.GreedyFeatureAgent):
     def __init__(self, **kwargs: typing.Any):
         kwargs['feature_extractor_func'] = reflex_offensive_features_extractor
         super().__init__(**kwargs)
         self.precomputer = pacai.search.distance.DistancePreComputer()
-        self.weights['score'] = 50.0
-        self.weights['closest_food'] = -2.0
-        self.weights['closest_enemy'] = -10.0
-        self.weights['nearest_capsule'] = -1.0
-        self.weights['on_home_side'] = -5.0
+        self.weights['score'] = 200.0
+        self.weights['distance_to_food'] = -7.0
+        self.weights['distance_to_non_defended_food'] = -0.5
+        self.weights['distance_to_threat'] = 5.0
+        self.weights['distance_to_prey'] = -12.0
+        self.weights['nearest_capsule'] = -8.0
+        self.weights['on_home_side'] = -15.0
+        self.weights['on_home_side_unsafe'] = -100.0
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self.precomputer.compute(initial_state.board)
@@ -68,46 +71,46 @@ def reflex_offensive_features_extractor(
     if current_pos is None:
         return features
 
+    features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
+    features['on_home_side_unsafe'] = int(state.is_scared(agent_index = agent.agent_index))
+
+    threat_positions = []
+    prey_positions = []
     opposing_positions: dict[int, pacai.core.board.Position] = state.get_opponent_positions(agent_index=agent.agent_index)
-
-    # find closest enemy agent, hard cutoff limit at 10 tiles for including the features
-    closest_enemy: tuple[int | None, float | None] = (None, None)  # idx, distance
+    
+    # first start with getting the opposing positinos, but seperate by ghost scared vs not scared for 2  new features
+    # this will allow what i had earlier to be seperated into different features with configuable weights
     for idx, pos in opposing_positions.items():
-        distance = distance_cache.get_distance(current_pos, pos)
-        if distance is None:
-            continue
-        if closest_enemy[1] is None or distance <= closest_enemy[1]:
-            closest_enemy: tuple[int | None, float | None]= (idx, distance)
+        if state.is_scared(agent_index=idx):
+            prey_positions.append(pos)
+        elif state.is_ghost(agent_index=idx):
+            threat_positions.append(pos)
 
+    distance_to_threat = get_nearest_distance(threat_positions, distance_cache, current_pos, max_distance=8)
+    if distance_to_threat is not None:
+        features['distance_to_threat'] = distance_to_threat
 
-    # now using the closest enemy, if it is a ghost but not scared, weigh it (-)
-    if closest_enemy[0] is not None and closest_enemy[1] is not None:
-        if state.is_ghost(closest_enemy[0]) and not state.is_scared(agent_index = closest_enemy[0]):
-            if closest_enemy[1] <= 8:
-                features['closest_enemy'] = -1 * closest_enemy[1]
-        elif state.is_ghost(closest_enemy[0]) and state.is_scared(agent_index = closest_enemy[0]):
-            features['closest_enemy'] = closest_enemy[1]
+    distance_to_prey = get_nearest_distance(prey_positions, distance_cache, current_pos)
+    if distance_to_prey is not None:
+        features['distance_to_prey'] = distance_to_prey
 
-
+    
     # next deal with the food based  feature
     food_positions: set[pacai.core.board.Position] = state.get_food(agent_index=agent.agent_index)
-    closest_food_distance = get_nearest_distance(food_positions, distance_cache, current_pos)
+    distance_to_food = get_nearest_distance(food_positions, distance_cache, current_pos)
+    if distance_to_food is not None:
+        features['distance_to_food'] = distance_to_food
 
-    if closest_food_distance is not None:
-        features['closest_food'] = closest_food_distance
+    # make sure that if both enemy agents are far enough from the food pellet, its a higher weighted feature (preferably)
+    non_defended_food = []
+    for food_pos in food_positions:
+        nearest_threat_to_food = get_nearest_distance(threat_positions, distance_cache, food_pos)
+        if nearest_threat_to_food is None or nearest_threat_to_food > 5:
+            non_defended_food.append(food_pos)
 
-    # make sure that if both enemy agents are on our side of the board, all in on the nearest food
-    has_defender = False
-    for idx, pos in opposing_positions.items():
-        if state.is_ghost(agent_index=idx):
-            has_defender = True
-            break
-    
-    if not has_defender and features.get('closest_food', None) is not None:
-        features['closest_food'] = features['closest_food'] * 5  # random 5 for now but we will just have to rip it
-    
-    # check if on home of the board
-    features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
+    distance_to_non_defended_food = get_nearest_distance(non_defended_food, distance_cache, current_pos)
+    if distance_to_non_defended_food is not None:
+        features['distance_to_non_defended_food'] = distance_to_non_defended_food
 
     my_mod = state._team_modifier(agent.agent_index)
     power_capsule_positions = []
@@ -150,9 +153,12 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         """ Precompute distances. """
 
         self.weights['distance_to_invader'] = -20.0
-        self.weights['food_distance_sum'] = -0.1
-        self.weights['num_invaders_on_same_side'] = -1000.0
-        self.weights['invader_distance_to_food'] = 5.0
+        self.weights['distance_to_invader_when_scared'] = -100.0
+        self.weights['food_distance_sum'] = -1.0
+        self.weights['num_invaders_on_same_side'] = -2500.0
+        self.weights['invader_distance_to_food'] = 30.0
+        self.weights['on_home_side'] = 200.0
+        self.weights['stopped'] = -10.0
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self._distances.compute(initial_state.board)
@@ -189,27 +195,20 @@ def extract_defensive_features(
 
     features['num_invaders_on_same_side'] = len(invader_positions)
 
-    # Feature 1: distance to the closest invader.
-    # If scared, this becomes a danger score that stops growing once we are far enough away.
-    if (len(invader_positions) > 0):
-        distances_to_invaders = []
 
-        # Get the distance to each invader
-        for invader_position in invader_positions.values():
-            distance = agent._distances.get_distance(current_position, invader_position)
-            if (distance is not None):
-                distances_to_invaders.append(distance)
-        # apply feature to closest invader
-        if (len(distances_to_invaders) > 0):
-            closest_invader = min(distances_to_invaders)
+    # changing code for invader positions to use the nearest distance helper
+    invader_pos_list = []
+    for invader_position in invader_positions.values():
+        invader_pos_list.append(invader_position)
 
-            if (is_scared):
-                # set hard limit on when to be run away from invaders when scared
-                features['distance_to_invader'] = SAFE_INVADER_DISTANCE - min(
-                        closest_invader,
-                        SAFE_INVADER_DISTANCE)
-            else:
-                features['distance_to_invader'] = closest_invader
+    closest_invader = get_nearest_distance(invader_pos_list, agent._distances, current_position)
+
+    if closest_invader is not None:
+        if is_scared and closest_invader < SAFE_INVADER_DISTANCE:
+            features['distance_to_invader_when_scared'] = closest_invader
+        else:
+            # still prefer to overwrite this with invader w/ greatest density of food nearby
+            features['distance_to_invader'] = closest_invader
 
     # sum of all the distances from us to the food to defend
     food_distance_sum = 0
