@@ -1,5 +1,3 @@
-import json
-import os
 import pacai.core.agentinfo
 import pacai.util.alias
 import pacai.agents.greedy
@@ -12,23 +10,6 @@ import pacai.core.agent
 import pacai.capture.gamestate
 import pacai.core.board
 import pacai.pacman.board
-
-
-def load_weight_overrides(category: str) -> dict:
-    """
-    Read weights from the JSON file pointed to by the CAPTURE_WEIGHTS env var.
-    Returns an empty dict if the env var is unset or the file is missing/invalid.
-    No-op in submission (env var never set on autograder).
-    """
-    path = os.environ.get('CAPTURE_WEIGHTS')
-    if not path or not os.path.exists(path):
-        return {}
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    return data.get(category, {}) or {}
 
 
 def create_team() -> list[pacai.core.agentinfo.AgentInfo]:
@@ -49,28 +30,24 @@ class InitialReflexOffensive(pacai.agents.greedy.GreedyFeatureAgent):
         self.precomputer = pacai.search.distance.DistancePreComputer()
         self.threat_detection_range = 10
         self.safe_food_distance = 5
-        self.weights['score'] = 200.0
-        self.weights['distance_to_food'] = -7.0
-        self.weights['distance_to_non_defended_food'] = -0.5
-        self.weights['distance_to_threat'] = 15
-        self.weights['distance_to_prey'] = -12.0
-        self.weights['nearest_capsule'] = -8.0
-        self.weights['on_home_side'] = -15.0
-        self.weights['on_home_side_unsafe'] = -100.0
-        self.weights['have_scared_enemy'] = 450
-        self.weights['oscilating_action'] = -20
-        self.weights['food_eaten_by_action'] = 500.0
-        self.weights['food_cluster_nearby'] = 25.0
-
-        for key, value in load_weight_overrides('offensive').items():
-            self.weights[key] = float(value)
+        self.weights['score'] = 100.0
+        self.weights['distance_to_food'] = -22.0
+        self.weights['distance_to_non_defended_food'] = -3.5
+        self.weights['distance_to_threat'] = 10
+        self.weights['distance_to_prey'] = -40.0
+        self.weights['nearest_capsule'] = -6.0
+        self.weights['on_home_side'] = -40.0
+        self.weights['on_home_side_unsafe'] = -50.0
+        self.weights['have_scared_enemy'] = 1100
+        self.weights['oscilating_action'] = -3.0
+        self.weights['food_eaten_by_action'] = 1200.0
+        self.weights['food_cluster_nearby'] = 5.0
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self.precomputer.compute(initial_state.board)
         width = initial_state.board.width
         self.threat_detection_range = max(8, width // 3)
         self.safe_food_distance = max(4, width // 5)
-
 
 def reflex_offensive_features_extractor(
         state: pacai.capture.gamestate.GameState,
@@ -212,16 +189,13 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
                 pacai.search.distance.DistancePreComputer())
         """ Precompute distances. """
 
-        self.weights['distance_to_invader'] = -20.0
-        self.weights['distance_to_invader_when_scared'] = -100.0
-        self.weights['food_distance_sum'] = -1.0
-        self.weights['num_invaders_on_same_side'] = -2500.0
+        self.weights['distance_to_invader'] = -45.0
+        self.weights['distance_to_invader_when_scared'] = -75.0
+        self.weights['food_distance_sum'] = -2.0
+        self.weights['num_invaders_on_same_side'] = -6500.0
         self.weights['invader_distance_to_food'] = 30.0
-        self.weights['on_home_side'] = 200.0
-        self.weights['stopped'] = -10.0
-
-        for key, value in load_weight_overrides('defensive').items():
-            self.weights[key] = float(value)
+        self.weights['on_home_side'] = 1300.0
+        self.weights['stopped'] = -95.0
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self._distances.compute(initial_state.board)
