@@ -31,7 +31,6 @@ def load_weight_overrides(category: str) -> dict:
     return data.get(category, {}) or {}
 
 
-
 def create_team() -> list[pacai.core.agentinfo.AgentInfo]:
     """
     Get the agent information that will be used to create a capture team.
@@ -60,6 +59,8 @@ class InitialReflexOffensive(pacai.agents.greedy.GreedyFeatureAgent):
         self.weights['on_home_side_unsafe'] = -100.0
         self.weights['have_scared_enemy'] = 450
         self.weights['oscilating_action'] = -20
+        self.weights['food_eaten_by_action'] = 500.0
+        self.weights['food_cluster_nearby'] = 25.0
 
         for key, value in load_weight_overrides('offensive').items():
             self.weights[key] = float(value)
@@ -76,10 +77,10 @@ def reflex_offensive_features_extractor(
         action: pacai.core.action.Action,
         agent: pacai.core.agent.Agent | None = None,
         **_kwargs: typing.Any) -> pacai.core.features.FeatureDict:
-    
+
     agent = typing.cast(InitialReflexOffensive, agent)
     state = typing.cast(pacai.capture.gamestate.GameState, state)
-    
+
     distance_cache = agent.precomputer
 
     features = pacai.core.features.FeatureDict()
@@ -106,7 +107,8 @@ def reflex_offensive_features_extractor(
     threat_positions = []
     prey_positions = []
     have_scared = False
-    opposing_positions: dict[int, pacai.core.board.Position] = state.get_opponent_positions(agent_index=agent.agent_index)
+    opposing_positions: dict[int, pacai.core.board.Position] = state.get_opponent_positions(
+            agent_index=agent.agent_index)
 
     # first start with getting the opposing positinos, but seperate by ghost scared vs not scared for 2  new features
     # this will allow what i had earlier to be seperated into different features with configuable weights
@@ -118,14 +120,17 @@ def reflex_offensive_features_extractor(
         elif state.is_ghost(agent_index=idx):
             threat_positions.append(pos)
 
-    distance_to_threat = get_nearest_distance(threat_positions, distance_cache, current_pos, max_distance=agent.threat_detection_range)
+    distance_to_threat = get_nearest_distance(
+            threat_positions,
+            distance_cache,
+            current_pos,
+            max_distance=agent.threat_detection_range)
     if distance_to_threat is not None:
         features['distance_to_threat'] = distance_to_threat
 
     distance_to_prey = get_nearest_distance(prey_positions, distance_cache, current_pos)
     if distance_to_prey is not None:
         features['distance_to_prey'] = distance_to_prey
-
 
     # next deal with the food based  feature
     food_positions: set[pacai.core.board.Position] = state.get_food(agent_index=agent.agent_index)
@@ -140,7 +145,10 @@ def reflex_offensive_features_extractor(
         if nearest_threat_to_food is None or nearest_threat_to_food > agent.safe_food_distance:
             non_defended_food.append(food_pos)
 
-    distance_to_non_defended_food = get_nearest_distance(non_defended_food, distance_cache, current_pos)
+    distance_to_non_defended_food = get_nearest_distance(
+            non_defended_food,
+            distance_cache,
+            current_pos)
     if distance_to_non_defended_food is not None:
         features['distance_to_non_defended_food'] = distance_to_non_defended_food
 
@@ -150,7 +158,10 @@ def reflex_offensive_features_extractor(
         if state._team_side(position=pos) != my_mod:
             power_capsule_positions.append(pos)
 
-    closest_capsule_distance = get_nearest_distance(power_capsule_positions, distance_cache, current_pos)
+    closest_capsule_distance = get_nearest_distance(
+            power_capsule_positions,
+            distance_cache,
+            current_pos)
 
     if closest_capsule_distance is not None and not have_scared:
         features['nearest_capsule'] = closest_capsule_distance
@@ -161,14 +172,24 @@ def reflex_offensive_features_extractor(
         if action == state.get_reverse_action(past_actions[-2]):
             features['oscilating_action'] = 1
 
+    # Gaurav changes: reward eating now and moving near groups of food.
+    if action != pacai.core.action.STOP and state.is_pacman(agent_index = agent.agent_index):
+        if current_pos not in food_positions:
+            features['food_eaten_by_action'] = 1
+
+    for food_pos in food_positions:
+        distance = distance_cache.get_distance(current_pos, food_pos)
+        if distance is not None and distance <= 5:
+            features['food_cluster_nearby'] = features.get('food_cluster_nearby', 0) + 1
+
     return features
 
 def get_nearest_distance(
         position_collection: set[pacai.core.board.Position] | list[pacai.core.board.Position],
         distance_cache: pacai.search.distance.DistancePreComputer,
         compare: pacai.core.board.Position,
-        max_distance: float | None = None
-    ) -> float | None:
+        max_distance: float | None = None,
+        ) -> float | None:
     closest_pos = None
     for pos in position_collection:
         distance = distance_cache.get_distance(compare, pos)
@@ -179,7 +200,7 @@ def get_nearest_distance(
         if closest_pos is None or distance < closest_pos:
             closest_pos = distance
     return closest_pos
-    
+
 SAFE_INVADER_DISTANCE = 8
 
 class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
@@ -187,7 +208,8 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         # init the feature extractor func via the kwargs using my modified feature extraction agents
         kwargs['feature_extractor_func'] = extract_defensive_features
         super().__init__(**kwargs)
-        self._distances: pacai.search.distance.DistancePreComputer = pacai.search.distance.DistancePreComputer()
+        self._distances: pacai.search.distance.DistancePreComputer = (
+                pacai.search.distance.DistancePreComputer())
         """ Precompute distances. """
 
         self.weights['distance_to_invader'] = -20.0
@@ -209,7 +231,7 @@ def extract_defensive_features(
         action: pacai.core.action.Action,
         agent: pacai.core.agent.Agent | None = None,
         **_kwargs: typing.Any) -> pacai.core.features.FeatureDict:
-    
+
     agent = typing.cast(DefensiveAgent, agent)
     state = typing.cast(pacai.capture.gamestate.GameState, state)
 
@@ -220,14 +242,12 @@ def extract_defensive_features(
         # We are dead and waiting to respawn.
         return features
 
-
     # Note the side of the board we are on.
     features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
 
     # Prefer moving over stopping.
     features['stopped'] = int(action == pacai.core.action.STOP)
 
-    
     # important features for defense
     # start with all of the invader positions
     invader_positions = state.get_invader_positions(agent_index = agent.agent_index)
@@ -235,7 +255,6 @@ def extract_defensive_features(
     is_scared = state.is_scared(agent_index = agent.agent_index)
 
     features['num_invaders_on_same_side'] = len(invader_positions)
-
 
     # changing code for invader positions to use the nearest distance helper
     invader_pos_list = []
