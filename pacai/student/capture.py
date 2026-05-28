@@ -1,3 +1,5 @@
+import json
+import os
 import pacai.core.agentinfo
 import pacai.util.alias
 import pacai.agents.greedy
@@ -10,6 +12,23 @@ import pacai.core.agent
 import pacai.capture.gamestate
 import pacai.core.board
 import pacai.pacman.board
+
+
+def load_weight_overrides(category: str) -> dict:
+    """
+    Read weights from the JSON file pointed to by the CAPTURE_WEIGHTS env var.
+    Returns an empty dict if the env var is unset or the file is missing/invalid.
+    No-op in submission (env var never set on autograder).
+    """
+    path = os.environ.get('CAPTURE_WEIGHTS')
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data.get(category, {}) or {}
 
 
 
@@ -29,17 +48,27 @@ class InitialReflexOffensive(pacai.agents.greedy.GreedyFeatureAgent):
         kwargs['feature_extractor_func'] = reflex_offensive_features_extractor
         super().__init__(**kwargs)
         self.precomputer = pacai.search.distance.DistancePreComputer()
+        self.threat_detection_range = 10
+        self.safe_food_distance = 5
         self.weights['score'] = 200.0
         self.weights['distance_to_food'] = -7.0
         self.weights['distance_to_non_defended_food'] = -0.5
-        self.weights['distance_to_threat'] = 5.0
+        self.weights['distance_to_threat'] = 15
         self.weights['distance_to_prey'] = -12.0
         self.weights['nearest_capsule'] = -8.0
         self.weights['on_home_side'] = -15.0
         self.weights['on_home_side_unsafe'] = -100.0
+        self.weights['have_scared_enemy'] = 450
+        self.weights['oscilating_action'] = -20
+
+        for key, value in load_weight_overrides('offensive').items():
+            self.weights[key] = float(value)
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self.precomputer.compute(initial_state.board)
+        width = initial_state.board.width
+        self.threat_detection_range = max(8, width // 3)
+        self.safe_food_distance = max(4, width // 5)
 
 
 def reflex_offensive_features_extractor(
@@ -76,17 +105,20 @@ def reflex_offensive_features_extractor(
 
     threat_positions = []
     prey_positions = []
+    have_scared = False
     opposing_positions: dict[int, pacai.core.board.Position] = state.get_opponent_positions(agent_index=agent.agent_index)
-    
+
     # first start with getting the opposing positinos, but seperate by ghost scared vs not scared for 2  new features
     # this will allow what i had earlier to be seperated into different features with configuable weights
     for idx, pos in opposing_positions.items():
         if state.is_scared(agent_index=idx):
+            features['have_scared_enemy'] = 1
+            have_scared = True
             prey_positions.append(pos)
         elif state.is_ghost(agent_index=idx):
             threat_positions.append(pos)
 
-    distance_to_threat = get_nearest_distance(threat_positions, distance_cache, current_pos, max_distance=8)
+    distance_to_threat = get_nearest_distance(threat_positions, distance_cache, current_pos, max_distance=agent.threat_detection_range)
     if distance_to_threat is not None:
         features['distance_to_threat'] = distance_to_threat
 
@@ -94,7 +126,7 @@ def reflex_offensive_features_extractor(
     if distance_to_prey is not None:
         features['distance_to_prey'] = distance_to_prey
 
-    
+
     # next deal with the food based  feature
     food_positions: set[pacai.core.board.Position] = state.get_food(agent_index=agent.agent_index)
     distance_to_food = get_nearest_distance(food_positions, distance_cache, current_pos)
@@ -105,7 +137,7 @@ def reflex_offensive_features_extractor(
     non_defended_food = []
     for food_pos in food_positions:
         nearest_threat_to_food = get_nearest_distance(threat_positions, distance_cache, food_pos)
-        if nearest_threat_to_food is None or nearest_threat_to_food > 5:
+        if nearest_threat_to_food is None or nearest_threat_to_food > agent.safe_food_distance:
             non_defended_food.append(food_pos)
 
     distance_to_non_defended_food = get_nearest_distance(non_defended_food, distance_cache, current_pos)
@@ -120,8 +152,14 @@ def reflex_offensive_features_extractor(
 
     closest_capsule_distance = get_nearest_distance(power_capsule_positions, distance_cache, current_pos)
 
-    if closest_capsule_distance is not None:
+    if closest_capsule_distance is not None and not have_scared:
         features['nearest_capsule'] = closest_capsule_distance
+
+    # oscilating actions become serious issue on the border btwn the two sides, also helps with finding alternate attack routes
+    past_actions = state.get_agent_actions(agent.agent_index)
+    if len(past_actions) >= 2:
+        if action == state.get_reverse_action(past_actions[-2]):
+            features['oscilating_action'] = 1
 
     return features
 
@@ -159,6 +197,9 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         self.weights['invader_distance_to_food'] = 30.0
         self.weights['on_home_side'] = 200.0
         self.weights['stopped'] = -10.0
+
+        for key, value in load_weight_overrides('defensive').items():
+            self.weights[key] = float(value)
 
     def game_start(self, initial_state: pacai.core.gamestate.GameState):
         self._distances.compute(initial_state.board)
