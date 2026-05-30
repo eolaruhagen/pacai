@@ -10,6 +10,21 @@ import pacai.core.agent
 import pacai.capture.gamestate
 import pacai.core.board
 import pacai.pacman.board
+import typing
+
+from pacai.util.reflection import Reference
+
+
+agent_1_last_turn_mode: typing.Literal['offensive' , 'defensive'] | None = None
+agent_2_last_turn_mode: typing.Literal['offensive' , 'defensive'] | None = None
+team_kills = 0
+
+MIN_TURNS_PER_MODE = 10
+
+# number of turns where attacking is safe after a kill
+# this logic may not be immediately invoked, depends on how close agent is
+# to a mid-board opening
+POST_KILL_OFFENSIVE_WINDOW = 12
 
 
 def create_team() -> list[pacai.core.agentinfo.AgentInfo]:
@@ -279,3 +294,65 @@ def get_defended_food(
             defended_food.add(food_position)
 
     return defended_food
+
+
+def conditional_feature_extractor(
+        state: pacai.core.gamestate.GameState,
+        action: pacai.core.action.Action,
+        agent: pacai.core.agent.Agent | None = None,
+        **_kwargs: typing.Any
+) -> pacai.core.features.FeatureDict:
+    
+    agent = typing.cast(DefensiveAgent, agent)
+    state = typing.cast(pacai.capture.gamestate.GameState, state)
+
+    return {}
+
+
+class UnifiedAgent(pacai.agents.greedy.GreedyFeatureAgent):
+    def __init__(self, 
+                 # these two var reads can be configured at setup of
+                 my_mode_var: str = 'agent_1_last_turn_mode',
+                 teammate_mode_var: str = 'agent_2_last_run_mode',
+                **kwargs: typing.Any
+                ) -> None:
+        kwargs['feature_extractor_func'] = conditional_feature_extractor
+        super().__init__(**kwargs)
+        self._distances: pacai.search.distance.DistancePreComputer = (
+                pacai.search.distance.DistancePreComputer())
+        """ Precompute distances. """
+
+        self.my_mode = my_mode_var
+        self.teammate_mode = teammate_mode_var
+
+        self.border_crossings: set[pacai.core.board.Position] = set()
+        self.team_side = typing.Literal['left', 'right']
+
+        # defensive mode features
+        self.weights['distance_to_invader'] = -45.0
+        self.weights['distance_to_invader_when_scared'] = -75.0
+        self.weights['food_distance_sum'] = -2.0
+        self.weights['num_invaders_on_same_side'] = -6500.0
+        self.weights['invader_distance_to_food'] = 30.0
+        self.weights['on_home_side'] = 1300.0
+        self.weights['stopped'] = -95.0
+
+        # offensive mode features go here
+
+    def game_start(self, initial_state: pacai.core.gamestate.GameState):
+        self._distances.compute(initial_state.board)
+    
+    # helper methods for reading module level shared state variables
+    def read_teamate_mode(self) -> typing.Literal['offensive' , 'defensive'] | None:
+        return globals()[self.teammate_mode]
+    
+    def write_used_mode(self, mode: typing.Literal['offensive' , 'defensive'] | None):
+        globals()[self.my_mode] = mode
+
+    def _init_border_crossing_positions(self, initial_state: pacai.core.gamestate.GameState):
+
+
+
+
+    
+
