@@ -21,10 +21,15 @@ Also create `plan-docs/defensive-agent-plan.md` documenting both this prototype 
   - A capsule is threatened if an invader is within `CAPSULE_GUARD_RANGE = 6`.
   - If the defender is not scared, prioritize moving toward the threatened capsule instead of directly chasing the invader.
   - If the defender is scared, scared-distance behavior takes precedence.
-- `oscilating_action`
-  - Reuse the existing reverse-action pattern from the offensive extractor.
-  - Penalize immediately reversing direction only during calm patrol states.
-  - Do not apply this penalty while chasing an invader, guarding a threatened capsule, or escaping while scared.
+- `distance_from_attacker_to_powerpellet`
+  - only weigh this feature heavely if the offensive agent is close to the power pellet.
+  - if the offensive agent is close to the power pellet, and the defensive agent is close to the power pellet, then the defensive agent should move toward the power pellet and guard it if and only if the defender is close to the power pellet. 
+  - we get the distance of the attacker to its nearist power pellet, and the distance of the defender to that same power pellet.
+  - first, if the attacker is not even near its nearist power pellet, we can just not have this feature activate, and we only want to activate this feature if the attacker is within a certain range of its nearest power pellet. If the attacker is close, then we determine the differnence in distnaces between the defender and the attacker relative to the power pellet. if we are close, the reward is positive, and if the attacker is close and we are far, the reward is negative. 
+- `oscilating_peanlity`
+  - This feature's goal is to give a higher and higher penalty as the agent oscillates back and forth. 
+  - Have a momentum variable that stores the penalty of the current oscillation of the agent 
+  - We analyze the previous three positions of the agent. If the first position and the last position are the same, that means we just made an oscillation, which would trigger the momentum variable to be multiplied by 1.2. Otherwise if it's not an oscillation, which would be the scenario if position 1 and position 3 are not the same, then we multiply the momentum variable by 0.9. We don't make the momentum variable go below 0.5 
 
 ## Initial Weights
 Keep all existing defensive weights unchanged. Add simple starter values only so the prototype can be tested before the optimizer runs:
