@@ -350,9 +350,9 @@ class UnifiedAgent(pacai.agents.greedy.GreedyFeatureAgent):
         globals()[self.my_mode] = mode
 
     def _init_border_crossing_positions(self, initial_state: pacai.core.gamestate.GameState):
+        team_side = initial_state._team_modifier(agent_index=self.agent_index)
 
-
-
-
-    
-
+        if team_side == -1:
+            self.team_side = 'left'
+        elif team_side == 1:
+            self.team_side = 'rig'
